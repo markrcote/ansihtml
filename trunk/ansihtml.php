@@ -1,47 +1,12 @@
 <html>
-<body bgcolor="black" color="white">
+<head>
 <?php
-$file = $_REQUEST['file'];
-$lord = false;
-if ($_REQUEST['lord'] == '1')
-    $lord = true;
 
-$ansi_colours = array( '0' => array (
-                           '30' => 'black',
-                           '31' => 'maroon',
-                           '32' => 'green',
-                           '33' => 'olive',
-                           '34' => 'navy',
-                           '35' => 'purple',
-                           '36' => 'teal',
-                           '37' => 'gray', ),
-                       '1' => array (                          
-                           '30' => 'silver',
-                           '31' => 'red',
-                           '32' => 'lime',
-                           '33' => 'yellow',
-                           '34' => 'blue',
-                           '35' => 'fuchsia',
-                           '36' => 'aqua',
-                           '37' => 'white' ) );
-
-$lord_colours = array( '1' => 'navy',
-                       '2' => 'green',
-                       '3' => 'teal',
-                       '4' => 'maroon',
-                       '5' => 'purple',
-                       '6' => 'olive',
-                       '7' => 'gray',
-                       '8' => 'gray',
-                       '9' => 'blue',
-                       '0' => 'lime',
-                       '!' => 'aqua',
-                       '@' => 'red',
-                       '#' => 'fuchsia',
-                       '$' => 'yellow',
-                       '%' => 'white' );
-
-class cell {
+/** Represents one character.  Style holds any amount of HTML that does
+ * not take up any space--e.g. span tags, bold, italics, etc.
+ */
+class Cell
+{
     var $style;
     var $data;
 
@@ -70,13 +35,16 @@ class cell {
     }
 }
 
-class row {
+
+/** Represents one row or line of characters. */
+class Row
+{
     var $cells = array();
 
     function get_cell($c)
     {
         if (!array_key_exists($c, $this->cells))
-            $this->cells[$c] = new cell();
+            $this->cells[$c] = new Cell();
         return $this->cells[$c];
     }
 
@@ -104,13 +72,16 @@ class row {
     }
 }
 
-class ansiblock {
+
+/** Represents a text block made up of a number of lines. */
+class TextBlock
+{
     var $rows = array();
 
     function get_row($r)
     {
         if (!array_key_exists($r, $this->rows))
-            $this->rows[$r] = new row();
+            $this->rows[$r] = new Row();
         return $this->rows[$r];
     }
 
@@ -143,138 +114,181 @@ class ansiblock {
     }
 }
 
-function get_attrs($code)
+
+/** Translates ANSI codes into a TextBlock. */
+class AnsiTranslator
 {
-    $attrs = array();
-    $sc_pos = strpos($code, ';');
-    if ($sc_pos)
+    private $ansi_colours = array( '0' => array (
+                                       '30' => 'black',
+                                       '31' => 'maroon',
+                                       '32' => 'green',
+                                       '33' => 'olive',
+                                       '34' => 'navy',
+                                       '35' => 'purple',
+                                       '36' => 'teal',
+                                       '37' => 'gray', ),
+                                   '1' => array (
+                                       '30' => 'silver',
+                                       '31' => 'red',
+                                       '32' => 'lime',
+                                       '33' => 'yellow',
+                                       '34' => 'blue',
+                                       '35' => 'fuchsia',
+                                       '36' => 'aqua',
+                                       '37' => 'white' ) );
+
+    private $lord_colours = array( '1' => 'navy',
+                                   '2' => 'green',
+                                   '3' => 'teal',
+                                   '4' => 'maroon',
+                                   '5' => 'purple',
+                                   '6' => 'olive',
+                                   '7' => 'gray',
+                                   '8' => 'gray',
+                                   '9' => 'blue',
+                                   '0' => 'lime',
+                                   '!' => 'aqua',
+                                   '@' => 'red',
+                                   '#' => 'fuchsia',
+                                   '$' => 'yellow',
+                                   '%' => 'white' );
+
+    var $block;
+    var $filename;
+
+    /** Interpret special Legend of the Red Dragon colour codes?
+     * These are of the style "`<code>" where <code> is 1-0 and shift-1 to
+     * shift-5 (!-%).  If this is false the characters will be printed
+     * literally.
+     */
+    var $interpret_lord_chars;
+
+    function __construct($_filename, $_interpret_lord_chars)
     {
-        $attrs = get_attrs(substr($code, $sc_pos + 1));
-        $code = substr($code, 0, $sc_pos);
+        $this->filename = $_filename;
+        $this->interpret_lord_chars = $_interpret_lord_chars;
     }
-    array_push($attrs, $code);
-    return $attrs;
-}
 
-?>
-
-<tt>
-<?php
-
-$block = new ansiblock();
-
-$lines = file("/var/www/$file");
-
-$ansi_code_list = '';
-$ansi_code = '';
-$log = '';
-foreach ($lines as $line_num => $line)
-{
-    $ansi_mode = false;
-    $lord_colour_mode = false;
-    $col = 1;
-    for($x = 0; $x < strlen($line); $x++)
+    function translate()
     {
-        $letter = substr($line, $x, 1);
-        if ($lord_colour_mode)
+        $lines = file($this->filename);
+        $this->block = new TextBlock();
+
+        foreach ($lines as $line_num => $line)
+            $this->translate_line($line_num, $line);
+
+        return $this->block;
+    }
+
+    private function translate_line($line_num, $line)
+    {
+        $ansi_mode = false;
+        $lord_colour_mode = false;
+        $col = 1;
+        for ($x = 0; $x < strlen($line); $x++)
         {
-            $style = '</span><span style=color:' .
-                $lord_colours[$letter] . '>';
-            $block->set_style($line_num+1, $col, $style);
-            $lord_colour_mode = false;
-        }
-        else if (!$ansi_mode)
-        {
-            if ($letter == chr(0x1b))
+            $letter = substr($line, $x, 1);
+            if ($lord_colour_mode)
             {
-                $ansi_mode = true;
-                $ansi_code = '';
-                $ansi_code_list .= '<br>ESC ';
+                // Next letter is a LORD colour indicator.
+                $style = '</span><span style=color:' .
+                         $this->lord_colours[$letter] . '>';
+                $this->block->set_style($line_num+1, $col, $style);
+                $lord_colour_mode = false;
             }
-            else if ($lord && $letter == '`')
+            else if (!$ansi_mode)
             {
-                $lord_colour_mode = true;
+                if ($letter == chr(0x1b))
+                {
+                    $ansi_mode = true;
+                    $ansi_code = '';
+                }
+                else if ($this->interpret_lord_chars && $letter == '`')
+                {
+                    $lord_colour_mode = true;
+                }
+                else
+                {
+                    if ($letter == chr(0xc4))
+                        $data = '&ndash;';
+                    else
+                        $data = htmlentities($letter);
+                    $this->block->set_data($line_num + 1, $col, $data);
+                    $col++;
+                }
             }
             else
             {
-                if ($letter == chr(0xc4))
-                    $data = '&ndash;';
-                else
-                    $data = htmlentities($letter);
-                $block->set_data($line_num + 1, $col, $data);
-                $col++;
-            }
-        }
-        else
-        {
-            $ansi_code_list .= $letter;
-            if ($letter == 'm')
-            {
-                if ($ansi_code == '0')
-                    $block->set_style($line_num+1, $col,
-                                      '</span><span style=color:white>');
-                else
+                // We are in the middle of an ANSI code.
+                if ($letter == 'm')
                 {
-                    $attrs = get_attrs($ansi_code);
-                    $highlight = 0;
-                    $colour = 30;
-                    $background = 0;
-                    $blinking = false;
-
-                    foreach ($attrs as $a)
+                    if ($ansi_code == '0')
+                        $this->block->set_style($line_num+1, $col,
+                                          '</span><span style=color:white>');
+                    else
                     {
-                        if ($a == 0 || $a == 1)
-                            $highlight = $a;
-                        elseif ($a == 5 || $a == 6)
-                            $blinking = true;
-                        elseif ($a >= 30 && $a <= 37)
-                            $colour = $a;
-                        elseif ($a >= 40 && $a <= 47)
-                            $background = $a;
+                        $attrs = explode(';', $ansi_code);
+                        $highlight = 0;
+                        $colour = 30;
+                        $background = 0;
+                        $blinking = false;
+
+                        foreach ($attrs as $a)
+                        {
+                            if ($a == 0 || $a == 1)
+                                $highlight = $a;
+                            elseif ($a == 5 || $a == 6)
+                                $blinking = true;
+                            elseif ($a >= 30 && $a <= 37)
+                                $colour = $a;
+                            elseif ($a >= 40 && $a <= 47)
+                                $background = $a;
+                        }
+
+                        $style = '</span><span style=color:' .
+                                 $this->ansi_colours[$highlight][$colour];
+                        if ($background)
+                            $style .= ';background:' .
+                                      $this->ansi_colours[0][$background - 10];
+                        if ($blinking)
+                            $style .= ';text-decoration:blink';
+                        $style .= '>';
+                        $this->block->set_style($line_num+1, $col, $style);
                     }
-
-                    //$log .= "code: $ansi_code highlight: $highlight colour: $colour (".$ansi_colours[$highlight][$colour].") background: $background (".$ansi_colours[$highlight][$background].")<br>";
-
-                    $style = '</span><span style=color:' .
-                             $ansi_colours[$highlight][$colour];
-                    if ($background)
-                        $style .= ';background:' .
-                            $ansi_colours[$highlight][$background - 10];
-                    if ($blinking)
-                        $style .= ';text-decoration:blink';
-                    $style .= '>';
-                    $block->set_style($line_num+1, $col, $style);
-
+                    $ansi_mode = false;
                 }
-                $ansi_mode = false;
+                else if ($letter == 'J')
+                {
+                    if ($ansi_code == '2')
+                        $this->block->clear();
+                    $ansi_mode = false;
+                }
+                else if ($letter != '[')
+                    $ansi_code .= $letter;
             }
-            else if ($letter == 'J')
-            {
-                if ($ansi_code == '2')
-                    $block->clear();
-                $ansi_mode = false;
-            }
-            else if ($letter != '[')
-                $ansi_code .= $letter;
         }
     }
-
-    //$new_line = ereg_replace(0xc4, "-", $new_line);
-    //$new_line = htmlentities($new_line);
-    //$new_line .= "<br>";
-    //echo $new_line;
 }
+
+?>
+</head>
+
+<body bgcolor="black" color="white">
+<tt>
+<?php
+
+$file = $_REQUEST['file'];
+$lord = false;
+if ($_REQUEST['lord'] == '1')
+    $lord = true;
+
+$translator = new AnsiTranslator("/var/www/$file", $lord);
+
+$block = $translator->translate();
 
 echo '<span>';
 $block->print_block();
 echo '</span>'
-/*
-echo '<span style=color:white>';
-echo '<br>';
-echo $log;
-echo $ansi_code_list;
-echo '</span>';
-*/
 ?>
 </tt>
 </body>
