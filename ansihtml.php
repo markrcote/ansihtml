@@ -12,18 +12,23 @@ class Cell
 
     function __construct()
     {
-        $this->data = "&nbsp;";
+        $this->data = '&nbsp;';
     }
 
-    function set_style($s)
+    function set_style($foreground, $background, $blinking)
     {
-        $this->style = $s;
+        $this->style = "</span><span style=color:$foreground";
+        if ($background)
+            $this->style .= ";background:$background";
+        if ($blinking)
+            $this->style .= ';text-decoration:blink';
+        $this->style .= '>';
     }
 
     function set_data($d)
     {
         if ($d == " ")
-            $this->data = "&nbsp;";
+            $this->data = '&nbsp;';
         else
             $this->data = $d;
     }
@@ -48,9 +53,9 @@ class Row
         return $this->cells[$c];
     }
 
-    function set_style($col, $style)
+    function set_style($col, $foreground, $background, $blinking)
     {
-        $this->get_cell($col)->set_style($style);
+        $this->get_cell($col)->set_style($foreground, $background, $blinking);
     }
 
     function set_data($col, $data)
@@ -64,11 +69,11 @@ class Row
         foreach ($this->cells as $key => &$cell)
         {
             for ($i = $last + 1; $i < $key; $i++)
-                echo "&nbsp;";
+                echo '&nbsp;';
             $cell->print_cell();
             $last = $key;
         }
-        echo "<br>";
+        echo '<br>';
     }
 }
 
@@ -85,9 +90,10 @@ class TextBlock
         return $this->rows[$r];
     }
 
-    function set_style($row, $col, $style)
+    function set_style($row, $col, $foreground, $background, $blinking)
     {
-        $this->get_row($row)->set_style($col, $style);
+        $this->get_row($row)->set_style($col, $foreground, $background,
+                                        $blinking);
     }
 
     function set_data($row, $col, $data)
@@ -102,15 +108,16 @@ class TextBlock
 
     function print_block()
     {
+        echo '<span>';
         $last = 0;
         foreach ($this->rows as $key => &$row)
         {
             for ($i = $last + 1; $i < $key; $i++)
-                echo "<br>";
+                echo '<br>';
             $row->print_row();
             $last = $key;
         }
-        echo "<br>";
+        echo '<br></span>';
     }
 }
 
@@ -191,9 +198,9 @@ class AnsiTranslator
             if ($lord_colour_mode)
             {
                 // Next letter is a LORD colour indicator.
-                $style = '</span><span style=color:' .
-                         $this->lord_colours[$letter] . '>';
-                $this->block->set_style($line_num+1, $col, $style);
+                $this->block->set_style($line_num+1, $col,
+                                        $this->lord_colours[$letter], '',
+                                        false);
                 $lord_colour_mode = false;
             }
             else if (!$ansi_mode)
@@ -223,14 +230,14 @@ class AnsiTranslator
                 if ($letter == 'm')
                 {
                     if ($ansi_code == '0')
-                        $this->block->set_style($line_num+1, $col,
-                                          '</span><span style=color:white>');
+                        $this->block->set_style($line_num+1, $col, 'white',
+                                                '', false);
                     else
                     {
                         $attrs = explode(';', $ansi_code);
                         $highlight = 0;
                         $colour = 30;
-                        $background = 0;
+                        $background = '';
                         $blinking = false;
 
                         foreach ($attrs as $a)
@@ -242,18 +249,14 @@ class AnsiTranslator
                             elseif ($a >= 30 && $a <= 37)
                                 $colour = $a;
                             elseif ($a >= 40 && $a <= 47)
-                                $background = $a;
+                                $background = $this->ansi_colours[0][$a - 10];
                         }
 
-                        $style = '</span><span style=color:' .
-                                 $this->ansi_colours[$highlight][$colour];
-                        if ($background)
-                            $style .= ';background:' .
-                                      $this->ansi_colours[0][$background - 10];
-                        if ($blinking)
-                            $style .= ';text-decoration:blink';
-                        $style .= '>';
-                        $this->block->set_style($line_num+1, $col, $style);
+                        $this->block->set_style($line_num+1, $col, 
+                                                $this->ansi_colours[$highlight]
+                                                                   [$colour],
+                                                $background,
+                                                $blinking);
                     }
                     $ansi_mode = false;
                 }
@@ -286,9 +289,7 @@ $translator = new AnsiTranslator("/var/www/$file", $lord);
 
 $block = $translator->translate();
 
-echo '<span>';
 $block->print_block();
-echo '</span>'
 ?>
 </tt>
 </body>
