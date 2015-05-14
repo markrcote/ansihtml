@@ -1,0 +1,1 @@
+PHP script that translates ANSI colour codes into HTML.
